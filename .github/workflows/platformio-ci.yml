@@ -1,0 +1,69 @@
+name: PlatformIO CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - fuyu-calc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      - name: Build ${{ matrix.env }}
+        run: pio run -e ${{ matrix.env }}
+
+      - name: Prepare Firmware Artifacts (with commit hash)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::7}"
+          src_dir=".pio/build/${{ matrix.env }}"
+          out_dir="artifacts/${{ matrix.env }}"
+          mkdir -p "$out_dir"
+
+          shopt -s nullglob
+          for f in "$src_dir"/*.bin "$src_dir"/*.elf "$src_dir"/*.map; do
+            base="$(basename "$f")"
+            stem="${base%.*}"
+            ext="${base##*.}"
+            cp "$f" "$out_dir/${stem}-${short_sha}.${ext}"
+          done
+
+      - name: Upload Firmware Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.env }}-${{ github.sha }}
+          path: artifacts/${{ matrix.env }}/*
+          if-no-files-found: warn
